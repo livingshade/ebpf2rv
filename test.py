@@ -41,7 +41,21 @@ def check_process(subprocess, message_if_fail):
         return subprocess
 
 
+def check_requirement():
+    def check_exec(name):
+        info('Checking tool "{}"'.format(name))
+        check_process(subprocess.run([name, '--version'], stdout=PIPE,
+                      stderr=PIPE), 'Unable to find required tool "{}"'.format(name))
+    check_exec('clang')
+    check_exec('llvm-objdump')
+    check_exec('cargo')
+    check_exec('riscv64-unknown-elf-gcc')
+    check_exec('qemu-riscv64')
+
+
 if __name__ == '__main__':
+    check_requirement()
+
     info('Compiling into eBPF bytecode')
     check_process(subprocess.run(['clang', '-target', 'bpf', '-O1', '-c',
                                   'tests/test_ebpf.c', '-o', 'tests/test_ebpf.o'], stdout=PIPE, stderr=PIPE), 'failed to compile source code into ebpf bytecode')
@@ -58,7 +72,7 @@ if __name__ == '__main__':
     check_process(subprocess.run(['riscv64-unknown-elf-gcc',
                                   'tests/test.c', '-o', 'tests/test.bin'], stdout=PIPE, stderr=PIPE), "failed to compile code into riscv64 elf")
 
-    info('Invoking qemu-riscv64, ==> QEMU OUTPUT')
+    info('Invoking qemu-riscv64, QEMU output:\n')
     check_process(subprocess.run(
         ['qemu-riscv64', 'tests/test.bin'], stderr=PIPE), "TEST FAILED")
 
