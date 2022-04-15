@@ -1,3 +1,5 @@
+#[allow(unused)]
+
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
@@ -5,17 +7,9 @@ use alloc::vec::Vec;
 
 use crate::consts::*;
 use rvjit::rv32i::*;
+use rvjit::rv32m::*;
 use rvjit::rv64i::*;
-
-#[cfg(not(feature = "std"))]
-macro_rules! format {
-    ($($arg: tt)*) => {
-        ()
-    };
-}
-
-#[cfg(not(feature = "std"))]
-type String = ();
+use rvjit::rv64m::*;
 
 // this mapping is made consistent with linux BPF JIT for RV64
 fn bpf_to_rv_reg(reg: u8) -> u8 {
@@ -33,15 +27,6 @@ fn bpf_to_rv_reg(reg: u8) -> u8 {
         RV_REG_S5, // FP
     ];
     REG_MAP[reg as usize]
-}
-
-fn rv_reg_name(reg: u8) -> &'static str {
-    static REG_NAMES: [&str; 32] = [
-        "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "fp", "s1", "a0", "a1", "a2", "a3", "a4",
-        "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
-        "t5", "t6",
-    ];
-    REG_NAMES[reg as usize]
 }
 
 fn is_in_i32_range(v: i64) -> bool {
@@ -91,130 +76,73 @@ impl<'a> JitContext<'a> {
         &self.source
     }
 
-    pub fn comment(&mut self, msg: String) {
-        #[cfg(feature = "std")]
-        self.source.push(msg);
-    }
-
     fn emit(&mut self, i: u32) {
         self.code.push(i);
         self.code_size += 4;
     }
 
     fn emit_placeholder(&mut self, s: &str) {
-        #[cfg(feature = "std")]
-        self.comment(String::from(s));
         self.emit(0); // invalid instruction
     }
 
     pub fn emit_lui(&mut self, rd: u8, imm: u32) {
-        self.comment(format!("lui {}, {}", rv_reg_name(rd), imm));
         self.emit(lui(rd, imm << 12)); // see notes
     }
 
     pub fn emit_add(&mut self, rd: u8, rs1: u8, rs2: u8) {
-        self.comment(format!(
-            "add {}, {}, {}",
-            rv_reg_name(rd),
-            rv_reg_name(rs1),
-            rv_reg_name(rs2)
-        ));
         self.emit(add(rd, rs1, rs2));
     }
 
     pub fn emit_sub(&mut self, rd: u8, rs1: u8, rs2: u8) {
-        self.comment(format!(
-            "sub {}, {}, {}",
-            rv_reg_name(rd),
-            rv_reg_name(rs1),
-            rv_reg_name(rs2)
-        ));
         self.emit(sub(rd, rs1, rs2));
     }
 
+    pub fn emit_mul(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(mul(rd, rs1, rs2));
+    }
+
+    pub fn emit_and(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(and(rd, rs1, rs2));
+    }
+
+    pub fn emit_or(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(or(rd, rs1, rs2));
+    }
+
     pub fn emit_subw(&mut self, rd: u8, rs1: u8, rs2: u8) {
-        self.comment(format!(
-            "subw {}, {}, {}",
-            rv_reg_name(rd),
-            rv_reg_name(rs1),
-            rv_reg_name(rs2)
-        ));
         self.emit(subw(rd, rs1, rs2));
     }
 
     pub fn emit_addi(&mut self, rd: u8, rs1: u8, imm: i32) {
-        self.comment(format!(
-            "addi {}, {}, {}",
-            rv_reg_name(rd),
-            rv_reg_name(rs1),
-            imm
-        ));
         self.emit(addi(rd, rs1, imm as u32));
     }
 
     pub fn emit_addiw(&mut self, rd: u8, rs1: u8, imm: i32) {
-        self.comment(format!(
-            "addiw {}, {}, {}",
-            rv_reg_name(rd),
-            rv_reg_name(rs1),
-            imm
-        ));
         self.emit(addiw(rd, rs1, imm as u32));
     }
 
     pub fn emit_slli(&mut self, rd: u8, rs: u8, shamt: u8) {
-        self.comment(format!(
-            "slli {}, {}, {}",
-            rv_reg_name(rd),
-            rv_reg_name(rs),
-            shamt
-        ));
         self.emit(slli64(rd, rs, shamt));
     }
 
     pub fn emit_srli(&mut self, rd: u8, rs: u8, shamt: u8) {
-        self.comment(format!(
-            "srli {}, {}, {}",
-            rv_reg_name(rd),
-            rv_reg_name(rs),
-            shamt
-        ));
         self.emit(srli64(rd, rs, shamt));
     }
 
     pub fn emit_ld(&mut self, rd: u8, rs: u8, imm: i32) {
-        self.comment(format!(
-            "ld {}, {}({})",
-            rv_reg_name(rd),
-            imm,
-            rv_reg_name(rs)
-        ));
         self.emit(ld(rd, rs, imm as u32));
     }
 
     // NOTE: sd rs2, offset(rs1)
     pub fn emit_sd(&mut self, rs2: u8, rs1: u8, imm: i32) {
-        self.comment(format!(
-            "sd {}, {}({})",
-            rv_reg_name(rs2),
-            imm,
-            rv_reg_name(rs1)
-        ));
         self.emit(sd(rs1, rs2, imm as u32));
     }
 
     pub fn emit_jal(&mut self, rd: u8, imm: i32) {
-        self.comment(format!("jal {}, {}", rv_reg_name(rd), imm));
         self.emit(jal(rd, imm as u32));
     }
 
     pub fn emit_jalr(&mut self, rd: u8, rs: u8, imm: i32) {
-        self.comment(format!(
-            "jalr {}, {}({})",
-            rv_reg_name(rd),
-            imm,
-            rv_reg_name(rs)
-        ));
         self.emit(jalr(rd, rs, imm as u32));
     }
 
@@ -252,7 +180,6 @@ impl<'a> JitContext<'a> {
     // dst stands for a eBPF register
     pub fn emit_load_imm64(&mut self, dst: u8, imm: i64) {
         self.pc_map.insert(self.bpf_pc - 1, self.code_size);
-        self.comment(format!("# LD_IMM_DW R{}, {}", dst, imm));
 
         let rd = bpf_to_rv_reg(dst);
         self.emit_imm(rd, imm);
@@ -277,7 +204,6 @@ impl<'a> JitContext<'a> {
     }
 
     fn fix_plt_load(&mut self, rvoff: usize, plt_offset: usize) {
-        self.comment(format!("# fix (auipc + addi) at offset {}", rvoff));
         let rel_off = (plt_offset - rvoff) as i32;
         let hi = (rel_off + (1 << 11)) >> 12;
         let lo = rel_off & 0xfff;
@@ -292,10 +218,8 @@ impl<'a> JitContext<'a> {
             self.emit(0);
         }
         let plt_offset = self.code_size;
-        self.comment(format!("# helpers table at offset {}", plt_offset));
 
         for &helper in helpers {
-            self.comment(format!(".quad {:#016x}", helper));
             let lo = helper as u32;
             let hi = (helper >> 32) as u32;
             self.emit(lo);
@@ -379,7 +303,6 @@ fn emit_instructions(ctx: &mut JitContext) {
         let mut rs = bpf_to_rv_reg(src);
 
         ctx.pc_map.insert(ctx.bpf_pc, ctx.code_size);
-        ctx.comment(format!("# {}: {:#016x}", i, insn));
 
         match op {
             ALU_X_ADD | ALU_K_ADD | ALU64_X_ADD | ALU64_K_ADD => {
@@ -407,6 +330,19 @@ fn emit_instructions(ctx: &mut JitContext) {
                     ctx.emit_zext_32(rd, rd);
                 }
             }
+            /* dst = dst OP src */
+            ALU_X_AND | ALU64_X_AND => {
+                ctx.emit_and(rd, rd, rs);
+                if !is64 {
+                    ctx.emit_zext_32(rd, rd);
+                }
+            }
+            ALU_X_OR | ALU64_X_OR => {
+                ctx.emit_or(rd, rd, rs);
+                if !is64 {
+                    ctx.emit_zext_32(rd, rd);
+                }
+            }
             ALU_X_MOV | ALU64_X_MOV | ALU_K_MOV | ALU64_K_MOV => {
                 if use_imm {
                     ctx.emit_imm(rd, imm as i64);
@@ -424,7 +360,7 @@ fn emit_instructions(ctx: &mut JitContext) {
                 ctx.emit_exit();
             }
             _ => {
-                ctx.comment(format!("# unimplemented BPF instruction: {:#016x}", insn));
+                todo!()
             }
         }
     }
@@ -435,45 +371,4 @@ pub fn compile(ctx: &mut JitContext, helpers: &[u64]) {
     emit_instructions(ctx);
     ctx.emit_epilogue();
     ctx.build_helper_fn_table(helpers);
-}
-
-#[cfg(test)]
-mod test {
-    use super::{compile, JitContext};
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn sum() {
-        use std::io::Write;
-
-        let prog = include_bytes!("../samples/sum.bin");
-        let insns: Vec<u64> = prog
-            .chunks_exact(8)
-            .map(|x| {
-                u64::from_le_bytes({
-                    let mut buf: [u8; 8] = Default::default();
-                    buf.copy_from_slice(x);
-                    buf
-                })
-            })
-            .collect();
-
-        let mut ctx = JitContext::new(&insns);
-        let helpers = [0xdeadu64, 0xbeef, 0xbad, 0xc0de];
-        compile(&mut ctx, &helpers);
-
-        for rv_insn in ctx.get_rv_source() {
-            println!("{}", rv_insn);
-        }
-
-        let mut f = std::fs::File::create("rv.bin").unwrap();
-        let data = ctx.get_rv_code().as_slice();
-        let slice = unsafe {
-            core::slice::from_raw_parts(
-                data.as_ptr() as *const u8,
-                data.len() * std::mem::size_of::<u32>(),
-            )
-        };
-        f.write(slice).unwrap();
-    }
 }

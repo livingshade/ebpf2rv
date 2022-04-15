@@ -1,6 +1,4 @@
 /target
 /Cargo.lock
-/tests
-/samples/*.txt
-/samples/*.o
-rv.bin
+/tests/*.txt
+/tests/*.o

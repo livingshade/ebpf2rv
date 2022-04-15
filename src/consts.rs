@@ -1,3 +1,6 @@
+#![allow(unused)]
+#![allow(dead_code)]
+
 // instruction class (3 bits)
 pub const BPF_LD: u32 = 0;
 pub const BPF_LDX: u32 = 1;
