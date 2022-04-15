@@ -3,34 +3,13 @@ mod consts;
 
 #[cfg(test)]
 mod test {
-    use std::io::Write;
-
     use crate::compile::{JitContext, *};
-
-    fn write_cstub(code: &[u32]) {
-        let mut stub_source = std::fs::File::create("tests/jitcode.c").unwrap();
-
-        // write program header
-        stub_source
-            .write_all("#include <stdint.h>\n\n".as_bytes())
-            .unwrap();
-
-        // write machine code
-        stub_source
-            .write_all("static uint32_t JIT_CODE[] = {".as_bytes())
-            .unwrap();
-        for inst in code {
-            stub_source.write_fmt(format_args!("{}, ", &inst)).unwrap();
-        }
-
-        // write code
-        stub_source.write_all("};\n".as_bytes()).unwrap();
-    }
+    use std::io::Write;
 
     #[test]
     fn compile_sum_test() {
         // load eBPF program
-        let prog = include_bytes!("../tests/sum.bin");
+        let prog = include_bytes!("../tests/test_ebpf.bin");
 
         // copy eBPF instruction
         let insns: Vec<u64> = prog
@@ -50,6 +29,63 @@ mod test {
 
         // compile and write to c stub code
         compile(&mut ctx, &helpers);
-        write_cstub(ctx.get_rv_code().as_slice());
+
+        // create file to output generated machine code
+        let mut stub_source = std::fs::File::create("tests/test.c").unwrap();
+
+        // write program header
+        stub_source
+            .write_all("#include <stdint.h>\n\n".as_bytes())
+            .unwrap();
+
+        // write machine code
+        stub_source
+            .write_all("static uint32_t JIT_CODE[] = {".as_bytes())
+            .unwrap();
+        for inst in ctx.get_rv_code() {
+            stub_source.write_fmt(format_args!("{}, ", &inst)).unwrap();
+        }
+
+        // write code
+        stub_source.write_all("};\n".as_bytes()).unwrap();
+
+        // write body
+        stub_source
+            .write_all(
+                "
+#include <stdio.h>
+
+typedef uint64_t (*ebpf_func_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+
+int main() {
+    const int SUM_RESULT = 5050; // from 1 to 100
+
+    // cast jit code to function
+    ebpf_func_t func = (ebpf_func_t)JIT_CODE;
+    uint64_t result = func(0, 0, 0, 0, 0);
+
+    printf(\"result is %d\\n\", result);
+
+    // check the result
+    if(result != SUM_RESULT) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+"
+                .as_bytes(),
+            )
+            .unwrap();
+
+        // let mut f = std::fs::File::create("jit.bin").unwrap();
+        // let data = ctx.get_rv_code().as_slice();
+        // let slice = unsafe {
+        //     core::slice::from_raw_parts(
+        //         data.as_ptr() as *const u8,
+        //         data.len() * std::mem::size_of::<u32>(),
+        //     )
+        // };
+        // f.write(slice).unwrap();
     }
 }
