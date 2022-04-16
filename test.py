@@ -35,7 +35,7 @@ def fail(message: str):
 def check_process(subprocess, message_if_fail):
     if subprocess.returncode != 0:
         fail(message_if_fail)
-        fail(subprocess.stderr.encode('utf-8'))
+        fail(subprocess.stderr.decode('utf-8'))
         exit(1)
     else:
         return subprocess
