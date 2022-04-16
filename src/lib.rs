@@ -31,7 +31,7 @@ mod test {
         compile(&mut ctx, &helpers);
 
         // create file to output generated machine code
-        let mut stub_source = std::fs::File::create("tests/test.c").unwrap();
+        let mut stub_source = std::fs::File::create("tests/test_jit.c").unwrap();
 
         // write program header
         stub_source
@@ -40,7 +40,7 @@ mod test {
 
         // write machine code
         stub_source
-            .write_all("static uint32_t JIT_CODE[] = {".as_bytes())
+            .write_all("__attribute__((section(\".text\"))) uint32_t JIT_CODE[] = {".as_bytes())
             .unwrap();
         for inst in ctx.get_rv_code() {
             stub_source.write_fmt(format_args!("{}, ", &inst)).unwrap();
@@ -48,34 +48,11 @@ mod test {
 
         // write code
         stub_source.write_all("};\n".as_bytes()).unwrap();
-
-        // write body
         stub_source
-            .write_all(
-                "
-#include <stdio.h>
-
-typedef uint64_t (*ebpf_func_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
-
-int main() {
-    const int SUM_RESULT = 5050; // from 1 to 100
-
-    // cast jit code to function
-    ebpf_func_t func = (ebpf_func_t)JIT_CODE;
-    uint64_t result = func(0, 0, 0, 0, 0);
-
-    printf(\"result is %d\\n\", result);
-
-    // check the result
-    if(result != SUM_RESULT) {
-        return 1;
-    } else {
-        return 0;
-    }
-}
-"
-                .as_bytes(),
-            )
+            .write_fmt(format_args!(
+                "uint32_t JIT_CODE_SIZE = {};\n",
+                4 * ctx.get_rv_code().len()
+            ))
             .unwrap();
 
         // let mut f = std::fs::File::create("jit.bin").unwrap();

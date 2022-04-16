@@ -1,4 +1,5 @@
 from asyncio.subprocess import PIPE
+from os import remove, system, unlink
 import subprocess
 import re
 
@@ -69,11 +70,14 @@ if __name__ == '__main__':
                   stdout=PIPE, stderr=PIPE), 'cargo test executation failed')
 
     info('Compiling riscv64 target file')
-    check_process(subprocess.run(['riscv64-unknown-elf-gcc',
-                                  'tests/test.c', '-o', 'tests/test.bin'], stdout=PIPE, stderr=PIPE), "failed to compile code into riscv64 elf")
+    check_process(subprocess.run(['riscv64-unknown-elf-gcc', '-O1',
+                                  'tests/test.c', 'tests/test_jit.c', '-o', 'tests/test.bin'], stdout=PIPE, stderr=PIPE), "failed to compile code into riscv64 elf")
 
     info('Invoking qemu-riscv64, QEMU output:\n')
     check_process(subprocess.run(
         ['qemu-riscv64', 'tests/test.bin'], stderr=PIPE), "TEST FAILED")
-
+    print()
     succ('ALL TEST PASSED, CONGRATULATIONS')
+
+    info('Cleaning up, removing generated files')
+    system('rm tests/*.o tests/*.bin tests/test_jit.c')
