@@ -1,5 +1,4 @@
 #[allow(unused)]
-
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
@@ -81,7 +80,7 @@ impl<'a> JitContext<'a> {
         self.code_size += 4;
     }
 
-    fn emit_placeholder(&mut self, s: &str) {
+    fn emit_placeholder(&mut self, _s: &str) {
         self.emit(0); // invalid instruction
     }
 
@@ -101,6 +100,26 @@ impl<'a> JitContext<'a> {
         self.emit(mul(rd, rs1, rs2));
     }
 
+    pub fn emit_mulw(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(mulw(rd, rs1, rs2));
+    }
+
+    pub fn emit_divu(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(divu(rd, rs1, rs2));
+    }
+
+    pub fn emit_divuw(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(divuw(rd, rs1, rs2));
+    }
+
+    pub fn emit_remu(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(remu(rd, rs1, rs2));
+    }
+
+    pub fn emit_remuw(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(remuw(rd, rs1, rs2));
+    }
+
     pub fn emit_and(&mut self, rd: u8, rs1: u8, rs2: u8) {
         self.emit(and(rd, rs1, rs2));
     }
@@ -115,6 +134,10 @@ impl<'a> JitContext<'a> {
 
     pub fn emit_addi(&mut self, rd: u8, rs1: u8, imm: i32) {
         self.emit(addi(rd, rs1, imm as u32));
+    }
+
+    pub fn emit_xor(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        self.emit(xor(rd, rs1, rs2))
     }
 
     pub fn emit_addiw(&mut self, rd: u8, rs1: u8, imm: i32) {
@@ -331,18 +354,85 @@ fn emit_instructions(ctx: &mut JitContext) {
                 }
             }
             /* dst = dst OP src */
-            ALU_X_AND | ALU64_X_AND => {
+            ALU_X_AND | ALU64_X_AND | ALU_K_AND | ALU64_K_AND => {
+                if use_imm {
+                    ctx.emit_imm(RV_REG_T1, imm as i64);
+                    rs = RV_REG_T1;
+                }
                 ctx.emit_and(rd, rd, rs);
                 if !is64 {
                     ctx.emit_zext_32(rd, rd);
                 }
             }
-            ALU_X_OR | ALU64_X_OR => {
+            ALU_X_OR | ALU64_X_OR | ALU_K_OR | ALU64_K_OR => {
+                if use_imm {
+                    ctx.emit_imm(RV_REG_T1, imm as i64);
+                    rs = RV_REG_T1;
+                }
                 ctx.emit_or(rd, rd, rs);
                 if !is64 {
                     ctx.emit_zext_32(rd, rd);
                 }
             }
+            ALU_X_XOR | ALU64_X_XOR | ALU_K_XOR | ALU64_K_XOR => {
+                if use_imm {
+                    ctx.emit_imm(RV_REG_T1, imm as i64);
+                    rs = RV_REG_T1;
+                }
+                ctx.emit_xor(rd, rd, rs);
+                if !is64 {
+                    ctx.emit_zext_32(rd, rd);
+                }
+            }
+            ALU_X_MUL | ALU64_X_MUL | ALU_K_MUL | ALU64_K_MUL => {
+                if use_imm {
+                    ctx.emit_imm(RV_REG_T1, imm as i64);
+                    rs = RV_REG_T1;
+                }
+
+                if is64 {
+                    ctx.emit_mul(rd, rd, rs);
+                } else {
+                    ctx.emit_mulw(rd, rd, rs);
+                }
+
+                if !is64 {
+                    ctx.emit_zext_32(rd, rd);
+                }
+            }
+            ALU_X_DIV | ALU64_X_DIV | ALU_K_DIV | ALU64_K_DIV => {
+                if use_imm {
+                    ctx.emit_imm(RV_REG_T1, imm as i64);
+                    rs = RV_REG_T1;
+                }
+
+                if is64 {
+                    ctx.emit_divu(rd, rd, rs);
+                } else {
+                    ctx.emit_divuw(rd, rd, rs);
+                }
+
+                if !is64 {
+                    ctx.emit_zext_32(rd, rd);
+                }
+            }
+            ALU_X_MOD | ALU64_X_MOD | ALU_K_MOD | ALU64_K_MOD => {
+                if use_imm {
+                    ctx.emit_imm(RV_REG_T1, imm as i64);
+                    rs = RV_REG_T1;
+                }
+
+                if is64 {
+                    ctx.emit_remu(rd, rd, rs);
+                } else {
+                    ctx.emit_remuw(rd, rd, rs);
+                }
+
+                if !is64 {
+                    ctx.emit_zext_32(rd, rd);
+                }
+            }
+            
             ALU_X_MOV | ALU64_X_MOV | ALU_K_MOV | ALU64_K_MOV => {
                 if use_imm {
                     ctx.emit_imm(rd, imm as i64);
