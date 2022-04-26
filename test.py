@@ -58,7 +58,7 @@ if __name__ == '__main__':
     check_requirement()
 
     info('Compiling into eBPF bytecode')
-    check_process(subprocess.run(['clang', '-target', 'bpf', '-O1', '-c',
+    check_process(subprocess.run(['clang', '-target', 'bpf', '-O0', '-c',
                                   'tests/test_ebpf.c', '-o', 'tests/test_ebpf.o'], stdout=PIPE, stderr=PIPE), 'failed to compile source code into ebpf bytecode')
     objdump = check_process(subprocess.run(['llvm-objdump', '--triple=bpf',
                                             '-S', 'tests/test_ebpf.o'], stdout=PIPE, stderr=PIPE), 'failed to dump ebpf bytecode').stdout.decode('utf-8')
@@ -80,4 +80,4 @@ if __name__ == '__main__':
     succ('ALL TEST PASSED, CONGRATULATIONS')
 
     info('Cleaning up, removing generated files')
-    system('rm tests/*.o tests/*.bin tests/test_jit.c')
+    # system('rm tests/*.o tests/*.bin tests/test_jit.c')

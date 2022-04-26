@@ -40,7 +40,9 @@ mod test {
 
         // write machine code
         stub_source
-            .write_all("__attribute__((section(\".text\"))) uint32_t JIT_CODE[] = {".as_bytes())
+            .write_all(
+                "__attribute__((section(\".text\"))) __attribute__((aligned(16))) const uint32_t JIT_CODE[] = {".as_bytes(),
+            )
             .unwrap();
         for inst in ctx.get_rv_code() {
             stub_source.write_fmt(format_args!("{}, ", &inst)).unwrap();

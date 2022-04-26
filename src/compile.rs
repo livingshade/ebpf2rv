@@ -51,6 +51,7 @@ pub struct JitContext<'a> {
     pc_map: BTreeMap<usize, usize>,
     plt_loads: Vec<usize>, // for BPF call
     exits: Vec<usize>,     // for BPF exit
+    jumps: Vec<(usize, usize)>, // for BPF jump, (bpf_pc, rv_off)
 }
 
 impl<'a> JitContext<'a> {
@@ -64,6 +65,7 @@ impl<'a> JitContext<'a> {
             pc_map: BTreeMap::new(),
             plt_loads: Vec::new(),
             exits: Vec::new(),
+            jumps: Vec::new(),
         }
     }
 
@@ -152,8 +154,44 @@ impl<'a> JitContext<'a> {
         self.emit(srli64(rd, rs, shamt));
     }
 
+    pub fn emit_lb(&mut self, rd: u8, rs: u8, imm: i32) {
+        self.emit(lb(rd, rs, imm as u32));
+    }
+
+    pub fn emit_lbu(&mut self, rd: u8, rs: u8, imm: i32) {
+        self.emit(lbu(rd, rs, imm as u32));
+    }
+
+    pub fn emit_lh(&mut self, rd: u8, rs: u8, imm: i32) {
+        self.emit(lh(rd, rs, imm as u32));
+    }
+
+    pub fn emit_lhu(&mut self, rd: u8, rs: u8, imm: i32) {
+        self.emit(lhu(rd, rs, imm as u32));
+    }
+
+    pub fn emit_lw(&mut self, rd: u8, rs: u8, imm: i32) {
+        self.emit(lw(rd, rs, imm as u32));
+    }
+
+    pub fn emit_lwu(&mut self, rd: u8, rs: u8, imm: i32) {
+        self.emit(lwu(rd, rs, imm as u32));
+    }
+
     pub fn emit_ld(&mut self, rd: u8, rs: u8, imm: i32) {
         self.emit(ld(rd, rs, imm as u32));
+    }
+
+    pub fn emit_sb(&mut self, rs2: u8, rs1: u8, imm: i32) {
+        self.emit(sb(rs1, rs2, imm as u32));
+    }
+
+    pub fn emit_sh(&mut self, rs2: u8, rs1: u8, imm: i32) {
+        self.emit(sh(rs1, rs2, imm as u32));
+    }
+
+    pub fn emit_sw(&mut self, rs2: u8, rs1: u8, imm: i32) {
+        self.emit(sw(rs1, rs2, imm as u32));
     }
 
     // NOTE: sd rs2, offset(rs1)
@@ -226,7 +264,15 @@ impl<'a> JitContext<'a> {
         self.emit_placeholder("j exit");
     }
 
-    fn fix_plt_load(&mut self, rvoff: usize, plt_offset: usize) {
+    pub fn emit_jump(&mut self) {
+        // eBPF jumps have 16-bit offset, which can span at most 2^16 * 8 = 2^19 bytes
+        // this offset can be fit into the immediate field of RISC-V's jal instruction
+        let rvoff = self.code_size;
+        self.jumps.push((self.bpf_pc, rvoff));
+        self.emit_placeholder("jal L?");
+    }
+
+    fn fixup_plt_load(&mut self, rvoff: usize, plt_offset: usize) {
         let rel_off = (plt_offset - rvoff) as i32;
         let hi = (rel_off + (1 << 11)) >> 12;
         let lo = rel_off & 0xfff;
@@ -251,14 +297,25 @@ impl<'a> JitContext<'a> {
 
         // TODO: omit clone of Vec
         let plt_loads = self.plt_loads.clone();
-        for &off in &plt_loads {
-            self.fix_plt_load(off, plt_offset);
+        for off in plt_loads {
+            self.fixup_plt_load(off, plt_offset);
         }
     }
 
-    fn fix_exit(&mut self, rvoff: usize, real_exit: usize) {
+    fn fixup_exit(&mut self, rvoff: usize, real_exit: usize) {
         let i = rvoff / 4;
         self.code[i] = jal(RV_REG_ZERO, (real_exit - rvoff) as u32);
+    }
+
+    fn fixup_jump(&mut self, bpf_pc: usize, rvoff: usize) {
+        let bpf_insn = self.bpf_insns[bpf_pc];
+        let insn_off = (bpf_insn >> 16) as i16;
+        // NOTE: offset of eBPF jump is relative to the next instruction
+        let dst_pc = bpf_pc as isize + 1 + (insn_off as isize);
+        let dst_rvoff = *self.pc_map.get(&(dst_pc as usize)).unwrap();
+        let delta = dst_rvoff as isize - rvoff as isize;
+        let i = rvoff / 4;
+        self.code[i] = jal(RV_REG_ZERO, delta as u32);
     }
 
     pub fn emit_prologue(&mut self, stack_size: usize) {
@@ -285,8 +342,13 @@ impl<'a> JitContext<'a> {
     pub fn emit_epilogue(&mut self) {
         let real_exit = self.code_size;
         let exits = self.exits.clone();
-        for &off in &exits {
-            self.fix_exit(off, real_exit);
+        for off in exits {
+            self.fixup_exit(off, real_exit);
+        }
+
+        let jumps = self.jumps.clone();
+        for (pc, off) in jumps {
+            self.fixup_jump(pc, off);
         }
 
         // return value: move R0 to a0
@@ -366,7 +428,6 @@ fn emit_instructions(ctx: &mut JitContext) {
                     ctx.emit_zext_32(rd, rd);
                 }
             }
-            /* dst = dst OP src */
             ALU_X_AND | ALU64_X_AND | ALU_K_AND | ALU64_K_AND => {
                 if use_imm {
                     ctx.emit_imm(RV_REG_T1, imm as i64);
@@ -445,7 +506,6 @@ fn emit_instructions(ctx: &mut JitContext) {
                     ctx.emit_zext_32(rd, rd);
                 }
             }
-            
             ALU_X_MOV | ALU64_X_MOV | ALU_K_MOV | ALU64_K_MOV => {
                 if use_imm {
                     ctx.emit_imm(rd, imm as i64);
@@ -456,6 +516,88 @@ fn emit_instructions(ctx: &mut JitContext) {
                     ctx.emit_zext_32(rd, rd);
                 }
             }
+            // TODO: 32 bit shifts
+            ALU64_X_LSH | ALU64_K_LSH => {
+                if use_imm {
+                    ctx.emit_slli(rd, rd, imm as u8);
+                } else {
+                    ctx.emit(sll(rd, rd, rs));
+                }
+            }
+            ALU64_X_RSH | ALU64_K_RSH => {
+                if use_imm {
+                    ctx.emit_srli(rd, rd, imm as u8);
+                } else {
+                    ctx.emit(srl(rd, rd, rs));
+                }
+            }
+            ALU64_X_ARSH | ALU64_K_ARSH => {
+                if use_imm {
+                    ctx.emit(srai64(rd, rd, imm as u8));
+                } else {
+                    ctx.emit(sra(rd, rd, rs));
+                }
+            }
+            LDX_MEM_B | LDX_MEM_H | LDX_MEM_W | LDX_MEM_DW => {
+                let mut load_insn_imm = off as i32;
+                if !is_in_i12_range(load_insn_imm) {
+                    ctx.emit_imm(RV_REG_T2, off as i64);
+                    ctx.emit_add(RV_REG_T2, RV_REG_T2, rs);
+                    load_insn_imm = 0;
+                    rs = RV_REG_T2;
+                }
+
+                let size_mod = (op & 0b11000) as u32;
+                // NOTE: should we sign extend the result?
+                match size_mod {
+                    BPF_B => ctx.emit_lbu(rd, rs, load_insn_imm),
+                    BPF_H => ctx.emit_lhu(rd, rs, load_insn_imm),
+                    BPF_W => ctx.emit_lwu(rd, rs, load_insn_imm),
+                    BPF_DW => ctx.emit_ld(rd, rs, load_insn_imm),
+                    _ => unreachable!()
+                }
+            }
+            ST_MEM_B | ST_MEM_H | ST_MEM_W | ST_MEM_DW |
+            STX_MEM_B | STX_MEM_H | STX_MEM_W | STX_MEM_DW => {
+                let mut store_insn_imm = off as i32;
+                let rs1= if !is_in_i12_range(store_insn_imm) {
+                    ctx.emit_imm(RV_REG_T1, off as i64);
+                    ctx.emit_add(RV_REG_T1, RV_REG_T1, rd);
+                    store_insn_imm = 0;
+                    RV_REG_T1
+                } else {
+                    rd
+                };
+
+                let use_st_imm = (op & 0b111) == BPF_ST as u8;
+                let rs2 = if use_st_imm {
+                    ctx.emit_imm(RV_REG_T2, imm as i64);
+                    RV_REG_T2
+                } else {
+                    rs
+                };
+
+                let size_mod = (op & 0b11000) as u32;
+                match size_mod {
+                    BPF_B => ctx.emit_sb(rs2, rs1, store_insn_imm),
+                    BPF_H => ctx.emit_sh(rs2, rs1, store_insn_imm),
+                    BPF_W => ctx.emit_sw(rs2, rs1, store_insn_imm),
+                    BPF_DW => ctx.emit_sd(rs2, rs1, store_insn_imm),
+                    _ => unreachable!()
+                }
+            }
+            JMP_X_JA | JMP_K_JA => {
+                ctx.emit_jump();
+            }
+            JMP_X_JSGT | JMP_K_JSGT => {
+                if use_imm {
+                    ctx.emit_imm(RV_REG_T1, imm as i64);
+                    rs = RV_REG_T1;
+                }
+                // NOTE: 8 stands for two RISC-V instructions (self + jal)
+                ctx.emit(bge(8, rs, rd)); // dst <= src (signed)
+                ctx.emit_jump();
+            }
             JMP_K_CALL => {
                 ctx.emit_call(imm);
             }
@@ -463,7 +605,7 @@ fn emit_instructions(ctx: &mut JitContext) {
                 ctx.emit_exit();
             }
             _ => {
-                todo!()
+                todo!("unimplemented eBPF instruction op = {:#x}", op)
             }
         }
     }
