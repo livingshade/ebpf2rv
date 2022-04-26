@@ -28,7 +28,7 @@ mod test {
         let helpers = [0xdeadu64, 0xbeef, 0xbad, 0xc0de];
 
         // compile and write to c stub code
-        compile(&mut ctx, &helpers);
+        compile(&mut ctx, &helpers, 512);
 
         // create file to output generated machine code
         let mut stub_source = std::fs::File::create("tests/test_jit.c").unwrap();

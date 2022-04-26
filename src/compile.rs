@@ -261,15 +261,25 @@ impl<'a> JitContext<'a> {
         self.code[i] = jal(RV_REG_ZERO, (real_exit - rvoff) as u32);
     }
 
-    pub fn emit_prologue(&mut self) {
+    pub fn emit_prologue(&mut self, stack_size: usize) {
         self.emit_addi(RV_REG_SP, RV_REG_SP, -56);
-        self.emit_sd(RV_REG_RA, RV_REG_SP, 0);
-        self.emit_sd(RV_REG_FP, RV_REG_SP, 8);
-        self.emit_sd(RV_REG_S1, RV_REG_SP, 16);
+        self.emit_sd(RV_REG_RA, RV_REG_SP, 48);
+        self.emit_sd(RV_REG_FP, RV_REG_SP, 40);
+        self.emit_sd(RV_REG_S1, RV_REG_SP, 32);
         self.emit_sd(RV_REG_S2, RV_REG_SP, 24);
-        self.emit_sd(RV_REG_S3, RV_REG_SP, 32);
-        self.emit_sd(RV_REG_S4, RV_REG_SP, 40);
-        self.emit_sd(RV_REG_S5, RV_REG_SP, 48);
+        self.emit_sd(RV_REG_S3, RV_REG_SP, 16);
+        self.emit_sd(RV_REG_S4, RV_REG_SP, 8);
+        self.emit_sd(RV_REG_S5, RV_REG_SP, 0);
+
+        // set frame pointer (s0)
+        self.emit_addi(RV_REG_FP, RV_REG_SP, 56);
+
+        // set BPF_REG_FP and allocate stack space for eBPF code
+        self.emit_addi(bpf_to_rv_reg(BPF_REG_FP), RV_REG_SP, 0);
+
+        // currently we limit stack size to 1024 bytes
+        let stack_size = (round_up(stack_size, 8) as i32).min(1024);
+        self.emit_addi(RV_REG_SP, RV_REG_SP, -stack_size);
     }
 
     pub fn emit_epilogue(&mut self) {
@@ -279,15 +289,18 @@ impl<'a> JitContext<'a> {
             self.fix_exit(off, real_exit);
         }
 
-        self.emit_addi(RV_REG_A0, bpf_to_rv_reg(BPF_REG_R0), 0); // move R0 -> a0
-        self.emit_ld(RV_REG_S5, RV_REG_SP, 48);
-        self.emit_ld(RV_REG_S4, RV_REG_SP, 40);
-        self.emit_ld(RV_REG_S3, RV_REG_SP, 32);
-        self.emit_ld(RV_REG_S2, RV_REG_SP, 24);
-        self.emit_ld(RV_REG_S1, RV_REG_SP, 16);
-        self.emit_ld(RV_REG_FP, RV_REG_SP, 8);
-        self.emit_ld(RV_REG_RA, RV_REG_SP, 0);
-        self.emit_addi(RV_REG_SP, RV_REG_SP, 56);
+        // return value: move R0 to a0
+        self.emit_addi(RV_REG_A0, bpf_to_rv_reg(BPF_REG_R0), 0);
+
+        // restore stack pointer from frame pointer
+        self.emit_addi(RV_REG_SP, RV_REG_FP, 0);
+        self.emit_ld(RV_REG_S5, RV_REG_SP, -56);
+        self.emit_ld(RV_REG_S4, RV_REG_SP, -48);
+        self.emit_ld(RV_REG_S3, RV_REG_SP, -40);
+        self.emit_ld(RV_REG_S2, RV_REG_SP, -32);
+        self.emit_ld(RV_REG_S1, RV_REG_SP, -24);
+        self.emit_ld(RV_REG_FP, RV_REG_SP, -16);
+        self.emit_ld(RV_REG_RA, RV_REG_SP, -8);
         self.emit_jalr(RV_REG_ZERO, RV_REG_RA, 0); // ret
     }
 }
@@ -456,8 +469,8 @@ fn emit_instructions(ctx: &mut JitContext) {
     }
 }
 
-pub fn compile(ctx: &mut JitContext, helpers: &[u64]) {
-    ctx.emit_prologue();
+pub fn compile(ctx: &mut JitContext, helpers: &[u64], stack_size: usize) {
+    ctx.emit_prologue(stack_size);
     emit_instructions(ctx);
     ctx.emit_epilogue();
     ctx.build_helper_fn_table(helpers);
