@@ -10,4 +10,4 @@ default = []
 std = []
 
 [dependencies]
-rvjit = { git = "https://github.com/latte-c/rvjit" }
+rvjit = { git = "https://github.com/latte-c/rvjit", rev = "58e145d" }

@@ -45,7 +45,6 @@ fn round_up(x: usize, d: usize) -> usize {
 pub struct JitContext<'a> {
     bpf_insns: &'a [u64],
     bpf_pc: usize,
-    source: Vec<String>, // to be removed
     code: Vec<u32>,
     code_size: usize,
     pc_map: BTreeMap<usize, usize>,
@@ -59,7 +58,6 @@ impl<'a> JitContext<'a> {
         Self {
             bpf_insns,
             bpf_pc: 0,
-            source: Vec::new(),
             code: Vec::new(),
             code_size: 0,
             pc_map: BTreeMap::new(),
@@ -71,10 +69,6 @@ impl<'a> JitContext<'a> {
 
     pub fn get_rv_code(&self) -> &Vec<u32> {
         &self.code
-    }
-
-    pub fn get_rv_source(&self) -> &Vec<String> {
-        &self.source
     }
 
     fn emit(&mut self, i: u32) {

@@ -1,7 +1,9 @@
+#![no_std]
+
 pub mod compile;
 mod consts;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod test {
     use crate::compile::{JitContext, *};
     use std::io::Write;
