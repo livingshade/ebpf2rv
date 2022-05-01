@@ -45,8 +45,8 @@ fn round_up(x: usize, d: usize) -> usize {
 pub struct JitContext<'a> {
     bpf_insns: &'a [u64],
     bpf_pc: usize,
-    code: Vec<u32>,
-    code_size: usize,
+    pub code: Vec<u32>,
+    pub code_size: usize,
     pc_map: BTreeMap<usize, usize>,
     plt_loads: Vec<usize>, // for BPF call
     exits: Vec<usize>,     // for BPF exit
@@ -389,23 +389,42 @@ fn emit_instructions(ctx: &mut JitContext) {
             continue;
         }
 
-        let is64 = (op & 0b111) == BPF_ALU64 as u8;
+        let is64 = match (op & 0b111) as u32 {
+            BPF_JMP | BPF_ALU64 => true,
+            _ => false,
+        };
         let use_imm = (op & 8) == 0;
-        let rd = bpf_to_rv_reg(dst);
+        let mut rd = bpf_to_rv_reg(dst);
         let mut rs = bpf_to_rv_reg(src);
 
         ctx.pc_map.insert(ctx.bpf_pc, ctx.code_size);
 
+        // helpers
+        let c_emit_t1_imm = |ctx: &mut JitContext, rs: &mut u8| {
+            if use_imm {
+                ctx.emit_imm(RV_REG_T1, imm as i64);
+                *rs = RV_REG_T1;
+            }
+        };
+        let c_emit_zext32 = |ctx: &mut JitContext, rd: u8| {
+            if !is64 {
+                ctx.emit_zext_32(rd, rd);
+            }
+        };
+        let c_emit_br_reg32 = |ctx: &mut JitContext, rs: &mut u8, rd: &mut u8| {
+            if !is64 {
+                ctx.emit_zext_32(RV_REG_T1, *rs);
+                ctx.emit_zext_32(RV_REG_T2, *rd);
+                *rs = RV_REG_T1;
+                *rd = RV_REG_T2;
+            }
+        };
+
         match op {
             ALU_X_ADD | ALU_K_ADD | ALU64_X_ADD | ALU64_K_ADD => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
+                c_emit_t1_imm(ctx, &mut rs);
                 ctx.emit_add(rd, rd, rs);
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_SUB | ALU_K_SUB | ALU64_X_SUB | ALU64_K_SUB => {
                 if use_imm {
@@ -418,87 +437,49 @@ fn emit_instructions(ctx: &mut JitContext) {
                         ctx.emit_subw(rd, rd, rs);
                     }
                 }
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_AND | ALU64_X_AND | ALU_K_AND | ALU64_K_AND => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
+                c_emit_t1_imm(ctx, &mut rs);
                 ctx.emit_and(rd, rd, rs);
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_OR | ALU64_X_OR | ALU_K_OR | ALU64_K_OR => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
+                c_emit_t1_imm(ctx, &mut rs);
                 ctx.emit_or(rd, rd, rs);
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_XOR | ALU64_X_XOR | ALU_K_XOR | ALU64_K_XOR => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
+                c_emit_t1_imm(ctx, &mut rs);
                 ctx.emit_xor(rd, rd, rs);
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_MUL | ALU64_X_MUL | ALU_K_MUL | ALU64_K_MUL => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
-
+                c_emit_t1_imm(ctx, &mut rs);
                 if is64 {
                     ctx.emit_mul(rd, rd, rs);
                 } else {
                     ctx.emit_mulw(rd, rd, rs);
                 }
-
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_DIV | ALU64_X_DIV | ALU_K_DIV | ALU64_K_DIV => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
-
+                c_emit_t1_imm(ctx, &mut rs);
                 if is64 {
                     ctx.emit_divu(rd, rd, rs);
                 } else {
                     ctx.emit_divuw(rd, rd, rs);
                 }
-
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_MOD | ALU64_X_MOD | ALU_K_MOD | ALU64_K_MOD => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
-
+                c_emit_t1_imm(ctx, &mut rs);
                 if is64 {
                     ctx.emit_remu(rd, rd, rs);
                 } else {
                     ctx.emit_remuw(rd, rd, rs);
                 }
-
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             ALU_X_MOV | ALU64_X_MOV | ALU_K_MOV | ALU64_K_MOV => {
                 if use_imm {
@@ -506,9 +487,7 @@ fn emit_instructions(ctx: &mut JitContext) {
                 } else {
                     ctx.emit_addi(rd, rs, 0);
                 }
-                if !is64 {
-                    ctx.emit_zext_32(rd, rd);
-                }
+                c_emit_zext32(ctx, rd);
             }
             // TODO: 32 bit shifts
             ALU64_X_LSH | ALU64_K_LSH => {
@@ -583,13 +562,72 @@ fn emit_instructions(ctx: &mut JitContext) {
             JMP_X_JA | JMP_K_JA => {
                 ctx.emit_jump();
             }
-            JMP_X_JSGT | JMP_K_JSGT => {
-                if use_imm {
-                    ctx.emit_imm(RV_REG_T1, imm as i64);
-                    rs = RV_REG_T1;
-                }
+            JMP_X_JEQ | JMP_K_JEQ | JMP32_X_JEQ | JMP32_K_JEQ => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(bne(8, rs, rd)); // dst != src
+                ctx.emit_jump();
+            }
+            JMP_X_JGT | JMP_K_JGT | JMP32_X_JGT | JMP32_K_JGT => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(bgeu(8, rs, rd)); // dst <= src (unsigned)
+                ctx.emit_jump();
+            }
+            JMP_X_JGE | JMP_K_JGE | JMP32_X_JGE | JMP32_K_JGE => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(bltu(8, rd, rs)); // dst < src (unsigned)
+                ctx.emit_jump();
+            }
+            JMP_X_JSET | JMP_K_JSET | JMP32_X_JSET | JMP32_K_JSET => {
+                c_emit_t1_imm(ctx, &mut rs);
+                ctx.emit_and(RV_REG_T1, rs, rd);
+                c_emit_zext32(ctx, RV_REG_T1);
+                ctx.emit(beq(8, RV_REG_T1, RV_REG_ZERO)); // dst & src == 0
+                ctx.emit_jump();
+            }
+            JMP_X_JNE | JMP_K_JNE | JMP32_X_JNE | JMP32_K_JNE => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(beq(8, rs, rd)); // dst == src
+                ctx.emit_jump();
+            }
+            JMP_X_JSGT | JMP_K_JSGT | JMP32_X_JSGT | JMP32_K_JSGT => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
                 // NOTE: 8 stands for two RISC-V instructions (self + jal)
                 ctx.emit(bge(8, rs, rd)); // dst <= src (signed)
+                ctx.emit_jump();
+            }
+            JMP_X_JSGE | JMP_K_JSGE | JMP32_X_JSGE | JMP32_K_JSGE => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(blt(8, rd, rs)); // dst < src (signed)
+                ctx.emit_jump();
+            }
+            JMP_X_JLT | JMP_K_JLT | JMP32_X_JLT | JMP32_K_JLT => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(bgeu(8, rd, rs)); // dst >= src (unsigned)
+                ctx.emit_jump();
+            }
+            JMP_X_JLE | JMP_K_JLE | JMP32_X_JLE | JMP32_K_JLE => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(bltu(8, rs, rd)); // dst > src (unsigned)
+                ctx.emit_jump();
+            }
+            JMP_X_JSLT | JMP_K_JSLT | JMP32_X_JSLT | JMP32_K_JSLT => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(bge(8, rd, rs)); // dst >= src (signed)
+                ctx.emit_jump();
+            }
+            JMP_X_JSLE | JMP_K_JSLE | JMP32_X_JSLE | JMP32_K_JSLE => {
+                c_emit_t1_imm(ctx, &mut rs);
+                c_emit_br_reg32(ctx, &mut rs, &mut rd);
+                ctx.emit(blt(8, rs, rd)); // dst > src (signed)
                 ctx.emit_jump();
             }
             JMP_K_CALL => {

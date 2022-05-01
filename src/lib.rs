@@ -5,8 +5,11 @@ mod consts;
 
 #[cfg(all(test, feature = "std"))]
 mod test {
+    extern crate std;
+
     use crate::compile::{JitContext, *};
     use std::io::Write;
+    use std::vec::Vec;
 
     #[test]
     fn compile_sum_test() {
