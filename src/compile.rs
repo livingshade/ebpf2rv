@@ -377,7 +377,7 @@ fn emit_instructions(ctx: &mut JitContext) {
         // process the only 16-bytes instruction: LD_IMM_DW
         if is_load_imm64 {
             is_load_imm64 = false;
-            let imm64 = (prev_imm as u64) | ((imm as u64) << 32);
+            let imm64 = (prev_imm as u32 as u64) | ((imm as u32 as u64) << 32);
             ctx.emit_load_imm64(prev_dst, imm64 as i64);
             continue;
         }
